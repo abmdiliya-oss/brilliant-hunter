@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<link rel="manifest" href="./manifest.webmanifest">
+<title>Brilliant Hunter</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#151d30;--muted:#9aa8bf;--line:#28344c;--accent:#8bd3a8;--gold:#e8c879}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#111b2e,#090d18 65%);color:#f4f6fb;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:920px;margin:auto;padding:22px 16px 48px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}
+h1{font-size:24px;letter-spacing:.08em;margin:0}.sub{color:var(--muted);font-size:13px;margin-top:6px}
+.pill{border:1px solid #355947;color:var(--accent);border-radius:999px;padding:6px 10px;font-size:11px;white-space:nowrap}
+.card{background:rgba(21,29,48,.94);border:1px solid var(--line);border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 10px 30px #0002}
+label{display:block;color:var(--muted);font-size:12px;margin:0 0 8px}
+input,select,button{font:inherit;border-radius:11px}input,select{width:100%;padding:12px;background:#0d1526;color:white;border:1px solid #35435c;outline:none}
+button{border:0;padding:12px 16px;background:var(--accent);color:#102018;font-weight:700;cursor:pointer}button.secondary{background:#26344c;color:#eaf0fa;border:1px solid #3a4964}button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:10px;align-items:end}.row>*{flex:1}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat{background:#0e1729;border:1px solid var(--line);border-radius:13px;padding:13px}.num{font-size:25px;font-weight:750}.caption{font-size:11px;color:var(--muted);margin-top:4px}
+#status{font-size:13px;color:var(--muted);line-height:1.5;white-space:pre-wrap}.game{padding:13px 0;border-top:1px solid var(--line)}.game:first-child{border-top:0}.gamehead{display:flex;justify-content:space-between;gap:12px;font-weight:650}.meta{font-size:12px;color:var(--muted);margin-top:5px}.tag{font-size:10px;border:1px solid #665b38;color:var(--gold);padding:4px 7px;border-radius:999px}
+.note{font-size:12px;color:var(--muted);line-height:1.55}.small{font-size:11px;color:var(--muted)}.candidate{background:#101a2b;border:1px solid #394963;border-radius:12px;padding:11px;margin-top:8px}.candidate strong{color:var(--gold)}.hidden{display:none}
+@media(max-width:560px){.row{display:block}.row button{width:100%;margin-top:9px}.stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:span 2}}
+</style>
+</head>
+<body>
+<main>
+<header class="top"><div><h1>BRILLIANT HUNTER</h1><div class="sub">Personal chess analysis · iPad edition</div></div><span class="pill">BUILD 03</span></header>
+<section class="card">
+  <div class="row"><div><label for="username">CHESS.COM USERNAME</label><input id="username" value="mossfeast" autocapitalize="none" autocomplete="off" spellcheck="false"></div><button id="loadBtn">Load history</button></div>
+  <p id="status" role="status">Ready. Load public Chess.com games. Engine status: not started.</p>
+  <div class="row"><button id="engineBtn" class="secondary">Test Stockfish</button><span class="small" id="engineStatus">Engine not tested</span></div>
+</section>
+<section class="stats">
+  <div class="stat"><div class="num" id="gamesCount">—</div><div class="caption">Games loaded</div></div>
+  <div class="stat"><div class="num" id="movesCount">—</div><div class="caption">Moves parsed</div></div>
+  <div class="stat"><div class="num" id="candidateCount">—</div><div class="caption">Candidates found</div></div>
+</section>
+<section class="card">
+  <div class="row" style="align-items:center"><div><strong>Game history</strong><div class="sub">Latest 12 public monthly archives</div></div><select id="monthSelect" aria-label="Archive month" style="max-width:170px"><option value="all">All months</option></select></div>
+  <div id="gamesList" class="note" style="margin-top:12px">No games loaded yet.</div>
+</section>
+<section class="card">
+  <strong>Brilliant-like candidates</strong>
+  <p class="note">This is a heuristic, not Chess.com’s private classifier. It looks for moves that match Stockfish’s top move and appear to offer a piece for capture while keeping the resulting evaluation reasonably sound. Each candidate needs human review.</p>
+  <div id="results" class="note">No analysis yet.</div>
+</section>
+<section class="card">
+  <strong>Engine files required</strong>
+  <p class="note">Place these two Stockfish 19 Lite single-thread files beside index.html before testing the engine:</p>
+  <div class="small">stockfish-19-lite-single.js<br>stockfish-19-lite-single.wasm</div>
+  <p class="note">They are separate upstream engine files and are not embedded in this ZIP. See README for direct download links and licensing notes.</p>
+</section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let games=[], engine=null, engineReady=false, candidateTotal=0;
+function status(s){$('status').textContent=s}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function splitPgn(text){return text.trim().split(/(?=\[Event\s)/).filter(x=>x.trim())}
+function parseGames(pgn, archive){
+  return splitPgn(pgn).map(raw=>{
+    const headers={};
+    for(const m of raw.matchAll(/^\[(\w+)\s+"(.*)"\]$/gm)) headers[m[1]]=m[2];
+    const chess=new Chess();
+    let count=0;
+    try{if(chess.load_pgn(raw)) count=chess.history().length;}catch(e){}
+    return {raw,headers,archive,moveCount:count};
+  }).filter(g=>g.headers.White||g.headers.Black);
+}
+async function loadHistory(){
+ const username=$('username').value.trim().toLowerCase(); if(!username){status('Enter a username.');return}
+ $('loadBtn').disabled=true;$('gamesList').textContent='Loading archive index…';
+ try{
+  const r=await fetch(`https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/archives`,{headers:{Accept:'application/json'}});
+  if(!r.ok)throw Error(`Chess.com returned HTTP ${r.status}. Check the username and public profile settings.`);
+  const archives=(await r.json()).archives||[];const latest=archives.slice(-12).reverse();games=[];
+  for(let i=0;i<latest.length;i++){
+   status(`Downloading archive ${i+1}/${latest.length}…`);
+   const pr=await fetch(latest[i]+'/pgn');if(!pr.ok)continue;
+   games.push(...parseGames(await pr.text(),latest[i]));
+  }
+  games.sort((a,b)=>(b.headers.Date||'').localeCompare(a.headers.Date||''));
+  $('gamesCount').textContent=games.length;
+  $('movesCount').textContent=games.reduce((n,g)=>n+g.moveCount,0);
+  $('candidateCount').textContent='0';
+  const months=[...new Set(games.map(g=>g.archive.split('/').slice(-2).join('-')))];
+  $('monthSelect').innerHTML='<option value="all">All months</option>'+months.map(m=>`<option value="${m}">${m}</option>`).join('');
+  renderGames();status(`Loaded ${games.length} public games. Test Stockfish before starting analysis.`);
+ }catch(e){status(e.message);$('gamesList').textContent='Could not load games.'}
+ finally{$('loadBtn').disabled=false}
+}
+function renderGames(){
+ const filter=$('monthSelect').value, visible=games.filter(g=>filter==='all'||g.archive.endsWith(filter.replace('-','/')));
+ $('gamesList').innerHTML=visible.length?visible.slice(0,100).map((g,i)=>`<article class="game"><div class="gamehead"><span>${esc(g.headers.White||'White')} vs ${esc(g.headers.Black||'Black')}</span><span class="meta">${esc(g.headers.Result||'')}</span></div><div class="meta">${esc(g.headers.Date||'')} · ${esc(g.headers.TimeControl||'')} · ${g.moveCount} plies</div><button class="secondary analyze" data-index="${games.indexOf(g)}" style="margin-top:9px;padding:8px 11px">Analyze game</button></article>`).join(''):'No games for this archive.';
+ document.querySelectorAll('.analyze').forEach(b=>b.addEventListener('click',()=>analyzeGame(Number(b.dataset.index),b)));
+}
+function waitForLine(test,timeout=20000){
+ return new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>{engine.removeEventListener('message',listener);reject(Error('Stockfish timed out.'))},timeout);
+  function listener(e){const line=String(e.data);if(test(line)){clearTimeout(timer);engine.removeEventListener('message',listener);resolve(line)}}
+  engine.addEventListener('message',listener);
+ });
+}
+async function commandUntil(cmd,test,timeout){
+ const p=waitForLine(test,timeout);engine.postMessage(cmd);return await p;
+}
+async function initEngine(){
+ if(engineReady)return true;
+ $('engineStatus').textContent='Loading engine…';
+ try{
+  engine=new Worker('./stockfish-19-lite-single.js');
+  await commandUntil('uci',x=>x==='uciok',30000);
+  await commandUntil('isready',x=>x==='readyok',30000);
+  engineReady=true;$('engineStatus').textContent='Stockfish 19 ready';return true;
+ }catch(e){if(engine)engine.terminate();engine=null;$('engineStatus').textContent='Engine failed to load';status('Could not load Stockfish. Confirm both engine files are beside index.html and open the app through HTTPS. '+e.message);return false}
+}
+async function analyzeFen(fen,depth=10){
+ const p=waitForLine(x=>x.startsWith('bestmove '),30000);
+ engine.postMessage('position fen '+fen);engine.postMessage('go depth '+depth);
+ const line=await p;return line.split(/\s+/)[1];
+}
+function pieceValue(type){return ({p:1,n:3,b:3,r:5,q:9,k:100})[type]||0}
+async function analyzeGame(index,button){
+ if(!await initEngine())return;
+ const g=games[index],chess=new Chess();try{chess.load_pgn(g.raw)}catch(e){status('Could not parse this PGN.');return}
+ const history=chess.history({verbose:true});const replay=new Chess();const found=[];
+ button.disabled=true;const old=button.textContent;
+ try{
+  for(let i=0;i<history.length;i++){
+   const move=history[i],beforeFen=replay.fen(),uci=move.from+move.to+(move.promotion||'');
+   status(`Analyzing ${g.headers.White} vs ${g.headers.Black}: move ${i+1}/${history.length} · checking top move and tactical reply…`);
+   const best=await analyzeFen(beforeFen,10);
+   replay.move({from:move.from,to:move.to,promotion:move.promotion});
+   if(best!==uci)continue;
+   const movedPiece=replay.get(move.to);
+   if(!movedPiece||movedPiece.type==='p'||movedPiece.type==='k')continue;
+   const reply=await analyzeFen(replay.fen(),10);
+   if(reply && reply.slice(2,4)===move.to){
+    const capturedValue=pieceValue(movedPiece.type);
+    found.push({ply:i+1,san:move.san,uci,value:capturedValue,reply});
+   }
+  }
+  candidateTotal+=found.length;$('candidateCount').textContent=candidateTotal;
+  const title=`${esc(g.headers.White)} vs ${esc(g.headers.Black)} · ${esc(g.headers.Date||'')}`;
+  const html=found.length?`<div class="candidate"><strong>${title}</strong>${found.map(x=>`<div style="margin-top:8px">Ply ${x.ply}: <strong>${esc(x.san)}</strong> — possible ${x.value}-point sacrifice; engine reply ${esc(x.reply)} appears to capture the moved piece.</div>`).join('')}<div class="small" style="margin-top:8px">Candidates only. This is not a confirmed Brilliant label.</div></div>`:`<div class="candidate">${title}<br>No candidates matched the current simple sacrifice heuristic at depth 10.</div>`;
+  $('results').insertAdjacentHTML('afterbegin',html);status(`Finished analysis. Found ${found.length} possible sacrifice candidates in this game.`);
+ }catch(e){status('Analysis stopped: '+e.message)}
+ finally{button.disabled=false;button.textContent=old}
+}
+$('loadBtn').addEventListener('click',loadHistory);
+$('monthSelect').addEventListener('change',renderGames);
+$('engineBtn').addEventListener('click',initEngine);
+if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body></html>
